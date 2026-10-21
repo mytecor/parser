@@ -4,6 +4,8 @@ A native Rust library for structural extraction using Tree-sitter and ast-grep.
 HTML, JSON, Markdown, and the other built-in `ast-grep-language` languages are
 available through `Language`. The library has no HTTP server or browser dependencies.
 
+![Animated flow: parse one AST, match rules, then repair missing required rules through bounded candidates, one Jev batch, fixture validation, and an atomic update.](docs/assets/how-it-works.svg)
+
 ```sh
 cargo test --locked
 cargo run --locked --example parse

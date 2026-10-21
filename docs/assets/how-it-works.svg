@@ -1,0 +1,130 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="720" viewBox="0 0 1080 720" role="img" aria-labelledby="title desc">
+  <title id="title">How the Universal Self-Healing Parser works</title>
+  <desc id="desc">An animated flow from changed HTML through one Tree-sitter AST to ast-grep matches. With healing enabled, a missing required rule triggers bounded candidates, one Jev batch, validation against the same AST and positive and negative fixtures, and an atomic revision-checked update. Failed healing keeps the original rules and reports unresolved rules.</desc>
+  <defs>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse"><circle cx="1" cy="1" r="1" fill="#243349" opacity=".45"/></pattern>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101b2e"/><stop offset="1" stop-color="#0a101d"/></linearGradient>
+    <marker id="arrow" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 8 4 0 8" fill="none" stroke="#536782" stroke-width="1.5"/></marker>
+    <style>
+      text{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#e6edf7}
+      .mono{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:14px}
+      .muted{fill:#a0b1c8;font-size:14px}.label{fill:#8ea5c3;font-size:11px;font-weight:700;letter-spacing:1.5px}
+      .heading{font-size:19px;font-weight:650}.small{font-size:13px}.mint{fill:#63e2bd}.amber{fill:#f7c67b}
+      .card{fill:#121e30;stroke:#2b3b53;stroke-width:1.2}.wire{fill:none;stroke:#42556f;stroke-width:1.5;marker-end:url(#arrow)}
+      .active{fill:none;stroke:#63e2bd;stroke-width:2;opacity:0;animation:focus 14s linear infinite}
+      .packet{fill:none;stroke:#63e2bd;stroke-width:3;stroke-linecap:round;stroke-dasharray:12 12;opacity:0;animation:travel 14s linear infinite}
+      .s1{animation-delay:0s}.s2{animation-delay:1.5s}.s3{animation-delay:3s}.s4{animation-delay:5s}.s5{animation-delay:7s}.s6{animation-delay:9s}.s7{animation-delay:11s}
+      .pending{animation:pending 14s linear infinite}.healed{opacity:0;animation:healed 14s linear infinite}
+      @keyframes focus{0%,1%{opacity:0}3%,12%{opacity:1}15%,100%{opacity:0}}
+      @keyframes travel{0%,2%{opacity:0;stroke-dashoffset:48}4%,12%{opacity:1}16%,100%{opacity:0;stroke-dashoffset:-48}}
+      @keyframes pending{0%,77%{opacity:1}81%,96%{opacity:0}100%{opacity:1}}
+      @keyframes healed{0%,77%{opacity:0}81%,96%{opacity:1}100%{opacity:0}}
+      @media(prefers-reduced-motion:reduce){.active,.packet{animation:none}.pending{animation:none;opacity:1}.healed{animation:none;opacity:0}}
+    </style>
+  </defs>
+
+  <rect width="1080" height="720" rx="24" fill="url(#bg)"/>
+  <rect width="1080" height="720" rx="24" fill="url(#grid)"/>
+  <rect x="40" y="35" width="91" height="25" rx="12.5" fill="#193a36"/>
+  <text x="85.5" y="52" text-anchor="middle" class="label mint">RUST / AST</text>
+  <text x="40" y="101" font-size="32" font-weight="700" letter-spacing="-.8">Structure changes. Extraction adapts.</text>
+  <text x="40" y="129" class="muted">One document tree. Structural matching. Validated rule repair.</text>
+  <circle cx="922" cy="48" r="4" fill="#63e2bd"/>
+  <text x="935" y="53" class="small" fill="#a0b1c8">14 s / loop</text>
+
+  <!-- The main document is parsed once; every matcher reuses this AST. -->
+  <path class="wire" d="M320 256H398"/>
+  <path class="packet s1" d="M320 256H390"/>
+  <path class="wire" d="M680 256H758"/>
+  <path class="packet s2" d="M680 256H750"/>
+  <rect x="40" y="165" width="280" height="190" rx="16" class="card"/>
+  <rect x="40" y="165" width="280" height="190" rx="16" class="active s1"/>
+  <text x="60" y="195" class="label">01 / INPUT</text>
+  <text x="60" y="225" class="heading">The markup changed</text>
+  <text x="60" y="255" class="mono muted">&lt;div role="button"&gt;</text>
+  <text x="78" y="279" class="mono mint">Sign in</text>
+  <text x="60" y="303" class="mono muted">&lt;/div&gt;</text>
+  <text x="60" y="332" class="small amber">Old rule: regex: old-login</text>
+
+  <rect x="400" y="165" width="280" height="190" rx="16" class="card"/>
+  <rect x="400" y="165" width="280" height="190" rx="16" class="active s2"/>
+  <text x="420" y="195" class="label">02 / TREE-SITTER</text>
+  <text x="420" y="225" class="heading">Parse once</text>
+  <path d="M432 250v57m0-38h23m-23 37h23" fill="none" stroke="#536782" stroke-width="1.5"/>
+  <circle cx="432" cy="248" r="4" fill="#8cbaff"/>
+  <text x="445" y="253" class="mono">element</text>
+  <text x="466" y="274" class="mono muted">start_tag</text>
+  <text x="466" y="312" class="mono mint">text: Sign in</text>
+  <text x="420" y="336" class="small muted">Same AST throughout this parse</text>
+
+  <rect x="760" y="165" width="280" height="190" rx="16" class="card"/>
+  <rect x="760" y="165" width="280" height="190" rx="16" class="active s3"/>
+  <text x="780" y="195" class="label">03 / AST-GREP</text>
+  <text x="780" y="225" class="heading">Match selected rules</text>
+  <g class="pending">
+    <rect x="780" y="248" width="240" height="36" rx="8" fill="#3a2d23"/>
+    <text x="795" y="271" class="mono amber">! login: 0 matches</text>
+    <text x="780" y="311" class="muted">Required rule is missing.</text>
+  </g>
+  <g class="healed">
+    <rect x="780" y="248" width="240" height="36" rx="8" fill="#173b34"/>
+    <text x="795" y="271" class="mono mint">✓ login: 1 match</text>
+    <text x="780" y="311" class="muted">Return text, ranges, captures.</text>
+  </g>
+  <text x="780" y="336" class="small muted">Existing matches are retained</text>
+
+  <!-- Missing required matches enter healing only when configured and enabled. -->
+  <path class="wire" d="M900 355v36H150v62"/>
+  <path class="packet s3" d="M900 355v36H150v54"/>
+  <rect x="398" y="377" width="284" height="28" rx="14" fill="#101a2b" stroke="#34465f"/>
+  <text x="540" y="396" text-anchor="middle" class="small amber">Missing required rule + heal: true</text>
+
+  <text x="180" y="433" class="label">SELF-HEALING / WITH A CONFIGURED JEV CLIENT AND TRUSTED FIXTURES</text>
+  <path class="wire" d="M260 535h38"/><path class="packet s4" d="M260 535h30"/>
+  <path class="wire" d="M520 535h38"/><path class="packet s5" d="M520 535h30"/>
+  <path class="wire" d="M780 535h38"/><path class="packet s6" d="M780 535h30"/>
+
+  <rect x="40" y="455" width="220" height="150" rx="16" class="card"/>
+  <rect x="40" y="455" width="220" height="150" rx="16" class="active s4"/>
+  <text x="58" y="484" class="label">04 / CANDIDATES</text>
+  <text x="58" y="513" class="heading">Build locally</text>
+  <text x="58" y="540" class="muted">Node kinds, text, relations</text>
+  <text x="58" y="563" class="muted">Bounded + ranked options</text>
+  <text x="58" y="589" class="mono mint">element → text</text>
+
+  <rect x="300" y="455" width="220" height="150" rx="16" class="card"/>
+  <rect x="300" y="455" width="220" height="150" rx="16" class="active s5"/>
+  <text x="318" y="484" class="label">05 / JEV</text>
+  <text x="318" y="513" class="heading">Choose a rule</text>
+  <text x="318" y="540" class="muted">One batch for all repairs</text>
+  <text x="318" y="563" class="muted">Candidates + local context</text>
+  <text x="318" y="589" class="mono mint">A / B / C / none</text>
+
+  <rect x="560" y="455" width="220" height="150" rx="16" class="card"/>
+  <rect x="560" y="455" width="220" height="150" rx="16" class="active s6"/>
+  <text x="578" y="484" class="label">06 / VALIDATION</text>
+  <text x="578" y="513" class="heading">Prove the match</text>
+  <text x="578" y="540" class="muted">Same AST + exact ranges</text>
+  <text x="578" y="563" class="muted">Positive + negative fixtures</text>
+  <text x="578" y="589" class="mono mint">Sign in ✓  Cancel ✕</text>
+
+  <rect x="820" y="455" width="220" height="150" rx="16" class="card"/>
+  <rect x="820" y="455" width="220" height="150" rx="16" class="active s7"/>
+  <text x="838" y="484" class="label">07 / PUBLISH</text>
+  <text x="838" y="513" class="heading">Commit atomically</text>
+  <text x="838" y="540" class="muted">Check the current revision</text>
+  <text x="838" y="563" class="muted">Next calls use repaired rules</text>
+  <text x="838" y="589" class="mono mint">revision 0 → 1</text>
+  <path class="wire" d="M1040 530h20V328h-18"/>
+  <path class="packet s7" d="M1040 530h20V328h-10"/>
+
+  <path d="M40 630h1000" stroke="#2b3b53"/>
+  <circle cx="46" cy="656" r="4" fill="#f7c67b"/>
+  <text x="60" y="661" class="small muted">No evidence → no API call</text>
+  <circle cx="362" cy="656" r="4" fill="#f7c67b"/>
+  <text x="376" y="661" class="small muted">Rejected repair → original rules + unresolved</text>
+  <circle cx="830" cy="656" r="4" fill="#63e2bd"/>
+  <text x="844" y="661" class="small muted">Save YAML explicitly</text>
+  <text x="40" y="693" class="label">UNIVERSAL SELF-HEALING PARSER</text>
+  <text x="1040" y="693" text-anchor="end" class="small muted">Native Rust · Tree-sitter · ast-grep</text>
+</svg>
