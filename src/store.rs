@@ -1,4 +1,4 @@
-use crate::{Error, Language, Result};
+use crate::{Error, Fixtures, Language, Result};
 use ast_grep_config::{GlobalRules, RuleConfig, SerializableRuleConfig};
 use serde_json::Value;
 use std::{
@@ -10,6 +10,7 @@ use std::{
 pub(crate) struct CompiledRule {
     pub raw: Value,
     pub config: RuleConfig<Language>,
+    pub fixtures: Fixtures,
 }
 impl CompiledRule {
     pub fn compile(raw: Value) -> Result<Self> {
@@ -19,14 +20,30 @@ impl CompiledRule {
             .ok_or_else(|| Error::InvalidRule("language is required".into()))?;
         name.parse::<Language>()
             .map_err(|_| Error::UnsupportedLanguage(name.into()))?;
+        // Parser-specific fixtures are preserved in raw YAML, but are not ast-grep fields.
+        let mut native = raw.clone();
+        let fixtures: Fixtures = match native.as_object_mut().and_then(|r| r.remove("fixtures")) {
+            Some(value) => {
+                if !value.is_object() {
+                    return Err(Error::InvalidRule("fixtures must be an object".into()));
+                }
+                serde_json::from_value(value)
+                    .map_err(|e| Error::InvalidRule(format!("invalid fixtures: {e}")))?
+            }
+            None => Fixtures::default(),
+        };
         let config: SerializableRuleConfig<Language> =
-            serde_json::from_value(raw.clone()).map_err(|e| Error::InvalidRule(e.to_string()))?;
+            serde_json::from_value(native).map_err(|e| Error::InvalidRule(e.to_string()))?;
         if config.id.is_empty() {
             return Err(Error::InvalidRule("id is required".into()));
         }
         let config = RuleConfig::try_from(config, &GlobalRules::default())
             .map_err(|e| Error::InvalidRule(e.to_string()))?;
-        Ok(Self { raw, config })
+        Ok(Self {
+            raw,
+            config,
+            fixtures,
+        })
     }
     pub fn replace(&self, rule: Value) -> Result<Self> {
         let mut raw = self.raw.clone();

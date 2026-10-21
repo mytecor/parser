@@ -1,4 +1,4 @@
-use crate::{Limits, Match, Result, ValidationCase};
+use crate::{Fixtures, Limits, Match, Result};
 use crate::{
     core::{self, Ast, Budget},
     store::CompiledRule,
@@ -115,36 +115,32 @@ pub(crate) fn generate(
     Ok(result)
 }
 
-pub(crate) fn has_evidence(cases: &[ValidationCase]) -> bool {
-    cases.iter().any(|c| !c.expected.is_empty()) && cases.iter().any(|c| c.expected.is_empty())
+pub(crate) fn has_evidence(fixtures: &Fixtures) -> bool {
+    !fixtures.positive.is_empty() && !fixtures.negative.is_empty()
 }
 
-/// Check exact ranges, not just nonzero match counts. The caller owns fixture intent.
+/// Require a match in every positive document and no matches in negative documents.
 pub(crate) fn validate(
     rule: &CompiledRule,
     ast: &Ast,
-    cases: &[ValidationCase],
+    fixtures: &Fixtures,
     limits: &Limits,
     budget: &Budget,
 ) -> Result<bool> {
-    if !has_evidence(cases) {
+    if !has_evidence(fixtures) {
         return Ok(false);
     }
     let current = core::execute(rule, ast, limits, budget)?;
     if current.is_empty() || current.len() > limits.max_healed_matches {
         return Ok(false);
     }
-    for case in cases {
-        let fixture = core::parse(&case.content, rule.config.language, limits, budget)?;
-        let mut actual: Vec<_> = core::execute(rule, &fixture, limits, budget)?
-            .iter()
-            .map(|m| m.range)
-            .collect();
-        let mut expected = case.expected.clone();
-        actual.sort();
-        expected.sort();
-        if actual != expected {
-            return Ok(false);
+    for (documents, should_match) in [(&fixtures.positive, true), (&fixtures.negative, false)] {
+        for content in documents {
+            let fixture = core::parse(content, rule.config.language, limits, budget)?;
+            let matches = core::execute(rule, &fixture, limits, budget)?;
+            if matches.is_empty() == should_match {
+                return Ok(false);
+            }
         }
     }
     Ok(true)

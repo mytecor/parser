@@ -37,13 +37,10 @@ impl JevClient for DemoJev {
 #[tokio::main]
 async fn main() -> Result<()> {
     let parser = Parser::builder()
-        .rules_yaml("id: login\nlanguage: Html\nmessage: Sign in control\nrule:\n  kind: element\n  regex: old-login\n")
+        .rules_yaml(include_str!("healing.yaml"))
         .jev(DemoJev)
-        .validation_cases("login", vec![
-            ValidationCase { content: "<div class=\"new\">Sign in</div>".into(), expected: vec![SourceRange { start: 0, end: 30 }] },
-            ValidationCase { content: "<div>Cancel</div>".into(), expected: vec![] },
-        ])
-        .build().await?;
+        .build()
+        .await?;
     let html = "<main><div role=\"button\">Sign in</div><button>Cancel</button></main>";
     let result = parser
         .parse(ParseRequest {

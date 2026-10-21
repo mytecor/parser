@@ -94,21 +94,6 @@ impl JevClient for CountedClient {
     }
 }
 
-fn fixtures(label: &str) -> Vec<ValidationCase> {
-    let content = format!("<div>{label}</div>");
-    let end = content.len();
-    vec![
-        ValidationCase {
-            content,
-            expected: vec![SourceRange { start: 0, end }],
-        },
-        ValidationCase {
-            content: "<button>Cancel</button>".into(),
-            expected: vec![],
-        },
-    ]
-}
-
 #[tokio::test]
 #[ignore = "uses JEV_API_KEY and makes a paid request to the real Jev API"]
 async fn real_jev_heals_two_rules_and_reuses_the_saved_revision() -> Result<()> {
@@ -120,6 +105,11 @@ message: Select the entire div element labeled Sign in, including its tags. Excl
 rule:
   kind: element
   regex: old-login
+fixtures:
+  positive:
+    - '<div>Sign in</div>'
+  negative:
+    - '<button>Cancel</button>'
 ---
 id: next
 language: Html
@@ -127,10 +117,13 @@ message: Select the entire div element labeled Continue, including its tags. Exc
 rule:
   kind: element
   regex: old-next
+fixtures:
+  positive:
+    - '<div>Continue</div>'
+  negative:
+    - '<button>Cancel</button>'
 "#)
         .jev(CountedClient { inner: live_client(), calls: calls.clone() })
-        .validation_cases("login", fixtures("Sign in"))
-        .validation_cases("next", fixtures("Continue"))
         .build().await?;
     let content = b"<div>Sign in</div><div>Continue</div><button>Cancel</button>";
     for run in 0..2 {

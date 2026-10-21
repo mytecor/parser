@@ -100,10 +100,15 @@ impl Default for Limits {
     }
 }
 
-/// Trusted fixtures supplied by the host, outside the native ast-grep YAML.
+/// Trusted fixtures stored in the rule YAML under `fixtures`.
 /// Healing requires at least one positive and one negative fixture per rule.
-#[derive(Debug, Clone)]
-pub struct ValidationCase {
-    pub content: String,
-    pub expected: Vec<SourceRange>,
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Fixtures {
+    /// Every positive document must contain at least one match.
+    #[serde(default)]
+    pub positive: Vec<String>,
+    /// Negative documents must contain no matches.
+    #[serde(default)]
+    pub negative: Vec<String>,
 }

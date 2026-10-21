@@ -1,0 +1,11 @@
+id: login
+language: Html
+message: Sign in control
+rule:
+  kind: element
+  regex: old-login
+fixtures:
+  positive:
+    - '<div class="new">Sign in</div>'
+  negative:
+    - '<div>Cancel</div>'

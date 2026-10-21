@@ -16,7 +16,6 @@ pub struct Parser {
     store: Arc<dyn RuleStore>,
     jev: Option<Arc<dyn JevClient>>,
     limits: Limits,
-    validation: BTreeMap<String, Vec<ValidationCase>>,
 }
 impl Parser {
     pub fn builder() -> ParserBuilder {
@@ -108,11 +107,7 @@ impl Parser {
             if let Some(jev) = &self.jev {
                 let mut candidates = BTreeMap::new();
                 for id in &broken {
-                    let cases = self
-                        .validation
-                        .get(id)
-                        .map(Vec::as_slice)
-                        .unwrap_or_default();
+                    let cases = &snapshot.rules[id].fixtures;
                     if !healing::has_evidence(cases) {
                         result.healing.diagnostics.push(Diagnostic {
                             code: DiagnosticCode::InsufficientEvidence,
@@ -162,7 +157,7 @@ impl Parser {
                             if healing::validate(
                                 &compiled,
                                 &ast,
-                                &self.validation[id],
+                                &snapshot.rules[id].fixtures,
                                 &self.limits,
                                 &budget,
                             )? {
@@ -241,7 +236,6 @@ pub struct ParserBuilder {
     store: Option<Arc<dyn RuleStore>>,
     jev: Option<Arc<dyn JevClient>>,
     limits: Limits,
-    validation: BTreeMap<String, Vec<ValidationCase>>,
 }
 impl ParserBuilder {
     pub fn rules_yaml(mut self, yaml: impl Into<String>) -> Self {
@@ -262,14 +256,6 @@ impl ParserBuilder {
     }
     pub fn limits(mut self, limits: Limits) -> Self {
         self.limits = limits;
-        self
-    }
-    pub fn validation_cases(
-        mut self,
-        rule_id: impl Into<String>,
-        cases: Vec<ValidationCase>,
-    ) -> Self {
-        self.validation.insert(rule_id.into(), cases);
         self
     }
     pub async fn build(self) -> Result<Parser> {
@@ -302,34 +288,20 @@ impl ParserBuilder {
         };
         let snapshot = store.snapshot()?;
         // Reject malformed trusted fixtures at setup time, before making any Jev call.
-        for (id, cases) in &self.validation {
-            let rule = snapshot
-                .rules
-                .get(id)
-                .ok_or_else(|| Error::InvalidRequest(format!("unknown validation rule: {id}")))?;
-            for case in cases {
+        for rule in snapshot.rules.values() {
+            for content in rule.fixtures.positive.iter().chain(&rule.fixtures.negative) {
                 core::parse(
-                    &case.content,
+                    content,
                     rule.config.language,
                     &self.limits,
                     &Budget::new(&self.limits),
                 )?;
-                for range in &case.expected {
-                    if range.start >= range.end
-                        || case.content.get(range.start..range.end).is_none()
-                    {
-                        return Err(Error::InvalidRequest(format!(
-                            "invalid fixture range for {id}"
-                        )));
-                    }
-                }
             }
         }
         Ok(Parser {
             store,
             jev: self.jev,
             limits: self.limits,
-            validation: self.validation,
         })
     }
 }

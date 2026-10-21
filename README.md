@@ -74,9 +74,29 @@ language injections.
 5. Atomically publish validated changes with revision checks.
 
 Accepting a change requires **at least one positive and one negative validation
-fixture** per rule. Supply them through
-`.validation_cases(id, Vec<ValidationCase>)`, separately from YAML. Each fixture
-specifies exact expected ranges. Without this evidence, the rule remains
+fixture** per rule. Store them in the rule YAML under `fixtures`:
+
+```yaml
+id: login
+language: Html
+message: Sign in control
+rule:
+  kind: element
+  regex: old-login
+fixtures:
+  positive:
+    - '<div>Sign in</div>'
+  negative:
+    - '<div>Cancel</div>'
+```
+
+Every `positive` document must produce at least one match; every `negative`
+document must produce no matches. Both lists need at least one example to
+allow healing. Fixtures are optional for ordinary matching and are preserved
+during healing, export, and saving. Invalid fixture fields are rejected when
+loading rules; fixture documents are parsed when building the parser.
+These are trusted examples maintained by the application alongside the rule.
+Without this evidence, the rule remains
 `unresolved` with `insufficient_evidence`, and no network request is made for it.
 See `examples/healing.rs` for a configuration example.
 
@@ -97,7 +117,7 @@ let key = std::env::var("JEV_API_KEY")?;
 let parser = Parser::builder()
     .rules_file("rules.yaml")
     .jev(HttpJevClient::new(key)?)
-    // Add validation_cases for rules that need healing.
+    // Include fixtures in rules.yaml for rules that need healing.
     .build().await?;
 # Ok(())
 # }
