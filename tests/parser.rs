@@ -182,33 +182,43 @@ rule:
   regex: 'old-next'
 "#;
 const CHANGED: &str = "<main><div role=\"button\">Sign in</div><div role=\"button\">Continue</div><button>Cancel</button></main>";
-fn fixtures(text: &str) -> Vec<ValidationCase> {
-    let element = format!("<div class=\"updated\">{text}</div>");
-    let positive = format!("<section>{element}<div>Cancel</div></section>");
-    vec![
-        ValidationCase {
-            content: positive,
-            expected: vec![SourceRange {
-                start: 9,
-                end: 9 + element.len(),
-            }],
-        },
-        ValidationCase {
-            content: "<div>Cancel</div><button>Other</button>".into(),
-            expected: vec![],
-        },
-    ]
+fn fixtures(text: &str) -> Fixtures {
+    Fixtures {
+        positive: vec![format!(
+            "<section><div class=\"updated\">{text}</div><div>Cancel</div></section>"
+        )],
+        negative: vec!["<div>Cancel</div><button>Other</button>".into()],
+    }
+}
+fn with_fixtures(yaml: &str, cases: &[(&str, Fixtures)]) -> String {
+    let mut docs: Vec<serde_json::Value> = serde_saphyr::from_multiple(yaml).unwrap();
+    for doc in &mut docs {
+        if let Some((_, fixtures)) = cases.iter().find(|(id, _)| doc["id"] == *id) {
+            doc["fixtures"] = serde_json::to_value(fixtures).unwrap();
+        }
+    }
+    docs.iter()
+        .map(|doc| serde_saphyr::to_string(doc).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n---\n")
+}
+fn healing_yaml() -> String {
+    with_fixtures(
+        BROKEN,
+        &[
+            ("login", fixtures("Sign in")),
+            ("next", fixtures("Continue")),
+        ],
+    )
 }
 async fn healing_parser(mode: Mode) -> (Parser, Arc<AtomicUsize>) {
     let calls = Arc::new(AtomicUsize::new(0));
     let parser = Parser::builder()
-        .rules_yaml(BROKEN)
+        .rules_yaml(healing_yaml())
         .jev(MockJev {
             calls: calls.clone(),
             mode,
         })
-        .validation_cases("login", fixtures("Sign in"))
-        .validation_cases("next", fixtures("Continue"))
         .build()
         .await
         .unwrap();
@@ -275,8 +285,8 @@ async fn optional_misses_and_disabled_healing_do_not_call_jev() {
 }
 
 #[tokio::test]
-async fn none_invalid_and_failed_answers_leave_rules_unchanged() {
-    for mode in [Mode::None, Mode::Invalid, Mode::Fail] {
+async fn none_and_invalid_answers_leave_rules_unchanged() {
+    for mode in [Mode::None, Mode::Invalid] {
         let (parser, calls) = healing_parser(mode).await;
         let before = parser.export_yaml().unwrap();
         let result = parser.parse(healing_request()).await.unwrap();
@@ -496,14 +506,12 @@ async fn content_ast_match_and_batch_limits() {
     ] {
         let calls = Arc::new(AtomicUsize::new(0));
         let parser = Parser::builder()
-            .rules_yaml(BROKEN)
+            .rules_yaml(healing_yaml())
             .limits(limits)
             .jev(MockJev {
                 calls: calls.clone(),
                 mode: Mode::Select,
             })
-            .validation_cases("login", fixtures("Sign in"))
-            .validation_cases("next", fixtures("Continue"))
             .build()
             .await
             .unwrap();
@@ -533,7 +541,7 @@ impl JevClient for UpdatingJev {
 }
 #[tokio::test(flavor = "multi_thread")]
 async fn stale_healing_cannot_overwrite_a_concurrent_revision() {
-    let store = Arc::new(MemoryRuleStore::from_yaml(BROKEN).unwrap());
+    let store = Arc::new(MemoryRuleStore::from_yaml(&healing_yaml()).unwrap());
     let calls = Arc::new(AtomicUsize::new(0));
     let parser = Parser::builder()
         .rule_store(store.clone())
@@ -544,8 +552,6 @@ async fn stale_healing_cannot_overwrite_a_concurrent_revision() {
             },
             store: store.clone(),
         })
-        .validation_cases("login", fixtures("Sign in"))
-        .validation_cases("next", fixtures("Continue"))
         .build()
         .await
         .unwrap();
@@ -576,23 +582,22 @@ impl JevClient for SlowJev {
     }
 }
 #[tokio::test]
-async fn jev_timeout_preserves_local_results_without_retry() {
+async fn jev_timeout_fails_without_retry() {
     let calls = Arc::new(AtomicUsize::new(0));
     let parser = Parser::builder()
-        .rules_yaml(BROKEN)
+        .rules_yaml(healing_yaml())
         .jev(SlowJev(calls.clone()))
         .limits(Limits {
             jev_timeout: std::time::Duration::from_millis(1),
             ..Default::default()
         })
-        .validation_cases("login", fixtures("Sign in"))
-        .validation_cases("next", fixtures("Continue"))
         .build()
         .await
         .unwrap();
-    let result = parser.parse(healing_request()).await.unwrap();
-    assert_eq!(result.revision, 0);
-    assert_eq!(result.healing.unresolved.len(), 2);
+    assert!(matches!(
+        parser.parse(healing_request()).await,
+        Err(Error::Healing(_))
+    ));
     assert_eq!(calls.load(Ordering::SeqCst), 1);
 }
 
@@ -600,17 +605,13 @@ async fn jev_timeout_preserves_local_results_without_retry() {
 async fn negative_fixtures_reject_a_selected_matching_rule() {
     let calls = Arc::new(AtomicUsize::new(0));
     let mut cases = fixtures("Sign in");
-    cases.push(ValidationCase {
-        content: "<div>Sign in</div>".into(),
-        expected: vec![],
-    });
+    cases.negative.push("<div>Sign in</div>".into());
     let parser = Parser::builder()
-        .rules_yaml(BROKEN)
+        .rules_yaml(with_fixtures(&healing_yaml(), &[("login", cases)]))
         .jev(MockJev {
             calls: calls.clone(),
             mode: Mode::Select,
         })
-        .validation_cases("login", cases)
         .build()
         .await
         .unwrap();
@@ -643,4 +644,267 @@ async fn ambiguous_current_matches_remain_unresolved() {
         .unwrap();
     assert!(result.healing.updated.is_empty());
     assert_eq!(result.healing.unresolved, ["login"]);
+}
+
+struct GatedJev {
+    inner: MockJev,
+    gate: Arc<tokio::sync::Semaphore>,
+}
+#[async_trait]
+impl JevClient for GatedJev {
+    async fn decide(&self, request: DecisionRequest) -> Result<DecisionResponse> {
+        let response = self.inner.decide(request).await;
+        self.gate.acquire().await.unwrap().forget();
+        response
+    }
+}
+
+// Drive a request exactly as far as its first pending await, without sleeps or races.
+async fn poll_pending<F: std::future::Future>(mut future: std::pin::Pin<&mut F>) {
+    std::future::poll_fn(|cx| {
+        assert!(future.as_mut().poll(cx).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+}
+async fn coordinated_parsers(
+    mode: Mode,
+) -> (
+    Parser,
+    Parser,
+    Arc<AtomicUsize>,
+    Arc<tokio::sync::Semaphore>,
+) {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let store = Arc::new(MemoryRuleStore::from_yaml(&healing_yaml()).unwrap());
+    let build = || {
+        Parser::builder()
+            .rule_store(store.clone())
+            .jev(GatedJev {
+                inner: MockJev {
+                    calls: calls.clone(),
+                    mode,
+                },
+                gate: gate.clone(),
+            })
+            .build()
+    };
+    // Separately built parsers sharing one store must coordinate, just like clones.
+    (build().await.unwrap(), build().await.unwrap(), calls, gate)
+}
+
+#[tokio::test]
+async fn concurrent_healing_is_shared_and_matches_use_each_document() {
+    let (first, second, calls, gate) = coordinated_parsers(Mode::Select).await;
+    let document = "<article><div class=\"other\">Sign in</div><div>Continue</div></article>";
+    let mut owner = Box::pin(first.parse(healing_request()));
+    poll_pending(owner.as_mut()).await;
+    let mut follower = Box::pin(second.parse(ParseRequest {
+        content: document.as_bytes(),
+        ..healing_request()
+    }));
+    poll_pending(follower.as_mut()).await;
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    gate.add_permits(1);
+    let (owner, follower) = tokio::join!(owner, follower);
+    let owner = owner.unwrap();
+    let follower = follower.unwrap();
+    assert_eq!(owner.revision, 1);
+    assert_eq!(follower.revision, 1);
+    assert!(follower.healing.unresolved.is_empty());
+    assert!(!follower.healing.attempted);
+    assert_eq!(follower.matches.len(), 2);
+    for m in follower.matches {
+        assert_eq!(&document[m.range.start..m.range.end], m.text);
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn shared_jev_failure_fails_all_followers_without_retry() {
+    let (first, second, calls, gate) = coordinated_parsers(Mode::Fail).await;
+    let mut owner = Box::pin(first.parse(healing_request()));
+    poll_pending(owner.as_mut()).await;
+    let mut follower = Box::pin(second.parse(healing_request()));
+    poll_pending(follower.as_mut()).await;
+    let mut another = Box::pin(first.parse(healing_request()));
+    poll_pending(another.as_mut()).await;
+    gate.add_permits(1);
+    let (a, b, c) = tokio::join!(owner, follower, another);
+    for result in [a, b, c] {
+        assert!(matches!(result, Err(Error::Healing(ref message)) if message.contains("offline")));
+    }
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    assert_eq!(first.rules().unwrap().revision(), 0);
+    // A later independent request can try again after the failed flight was removed.
+    gate.add_permits(1);
+    assert!(second.parse(healing_request()).await.is_err());
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn cancelling_healing_owner_releases_followers_and_reservation() {
+    let (first, second, calls, gate) = coordinated_parsers(Mode::Select).await;
+    let mut owner = Box::pin(first.parse(healing_request()));
+    poll_pending(owner.as_mut()).await;
+    let mut follower = Box::pin(second.parse(healing_request()));
+    poll_pending(follower.as_mut()).await;
+    drop(owner);
+    let result = follower.await;
+    assert!(matches!(result, Err(Error::Healing(ref message)) if message.contains("cancelled")));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+    gate.add_permits(1);
+    assert!(
+        second
+            .parse(healing_request())
+            .await
+            .unwrap()
+            .healing
+            .unresolved
+            .is_empty()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn shared_attempt_without_a_repair_does_not_trigger_another_call() {
+    for mode in [Mode::None, Mode::Select] {
+        let (first, second, calls, gate) = coordinated_parsers(mode).await;
+        let mut owner = Box::pin(first.parse(healing_request()));
+        poll_pending(owner.as_mut()).await;
+        let mut follower = Box::pin(second.parse(ParseRequest {
+            content: b"<div>Other page</div>",
+            ..healing_request()
+        }));
+        poll_pending(follower.as_mut()).await;
+        gate.add_permits(1);
+        let (owner, follower) = tokio::join!(owner, follower);
+        owner.unwrap();
+        let follower = follower.unwrap();
+        assert_eq!(follower.healing.unresolved, ["login", "next"]);
+        assert!(follower.matches.is_empty());
+        assert!(!follower.healing.attempted);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+}
+
+#[tokio::test]
+async fn overlapping_batch_waits_then_heals_only_its_remaining_rules() {
+    let (first, second, calls, gate) = coordinated_parsers(Mode::Select).await;
+    let mut owner = Box::pin(first.parse(ParseRequest {
+        required: &["login"],
+        rules: Some(&["login"]),
+        ..healing_request()
+    }));
+    poll_pending(owner.as_mut()).await;
+    let mut follower = Box::pin(second.parse(healing_request()));
+    poll_pending(follower.as_mut()).await;
+    gate.add_permits(2);
+    let (owner, follower) = tokio::join!(owner, follower);
+    assert_eq!(owner.unwrap().healing.updated, ["login"]);
+    let follower = follower.unwrap();
+    assert_eq!(follower.healing.updated, ["next"]);
+    assert!(follower.healing.unresolved.is_empty());
+    assert_eq!(follower.revision, 2);
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn shared_jev_timeout_fails_owner_and_follower() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let parser = Parser::builder()
+        .rules_yaml(healing_yaml())
+        .jev(SlowJev(calls.clone()))
+        .limits(Limits {
+            jev_timeout: std::time::Duration::from_millis(10),
+            ..Default::default()
+        })
+        .build()
+        .await
+        .unwrap();
+    let mut owner = Box::pin(parser.parse(healing_request()));
+    poll_pending(owner.as_mut()).await;
+    let mut follower = Box::pin(parser.parse(healing_request()));
+    poll_pending(follower.as_mut()).await;
+    let (a, b) = tokio::join!(owner, follower);
+    assert!(matches!(a, Err(Error::Healing(_))));
+    assert!(matches!(b, Err(Error::Healing(_))));
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn cancelling_a_waiter_does_not_cancel_shared_healing() {
+    let (first, second, calls, gate) = coordinated_parsers(Mode::Select).await;
+    let mut owner = Box::pin(first.parse(healing_request()));
+    poll_pending(owner.as_mut()).await;
+    let mut follower = Box::pin(second.parse(healing_request()));
+    poll_pending(follower.as_mut()).await;
+    drop(follower);
+    gate.add_permits(1);
+    assert!(owner.await.unwrap().healing.unresolved.is_empty());
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn a_failed_rule_fails_a_waiter_even_if_another_rule_is_still_healing() {
+    let calls = Arc::new(AtomicUsize::new(0));
+    let store = Arc::new(MemoryRuleStore::from_yaml(&healing_yaml()).unwrap());
+    let login_gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let next_gate = Arc::new(tokio::sync::Semaphore::new(0));
+    let build = |mode, gate| {
+        Parser::builder()
+            .rule_store(store.clone())
+            .jev(GatedJev {
+                inner: MockJev {
+                    calls: calls.clone(),
+                    mode,
+                },
+                gate,
+            })
+            .build()
+    };
+    let first = build(Mode::Select, login_gate.clone()).await.unwrap();
+    let second = build(Mode::Fail, next_gate.clone()).await.unwrap();
+    let mut login = Box::pin(first.parse(ParseRequest {
+        rules: Some(&["login"]),
+        required: &["login"],
+        ..healing_request()
+    }));
+    poll_pending(login.as_mut()).await;
+    let mut next = Box::pin(second.parse(ParseRequest {
+        rules: Some(&["next"]),
+        required: &["next"],
+        ..healing_request()
+    }));
+    poll_pending(next.as_mut()).await;
+    let mut follower = Box::pin(first.parse(healing_request()));
+    poll_pending(follower.as_mut()).await;
+    next_gate.add_permits(1);
+    assert!(next.await.is_err());
+    let error = tokio::time::timeout(std::time::Duration::from_millis(100), follower)
+        .await
+        .unwrap()
+        .unwrap_err();
+    assert!(matches!(error, Error::Healing(ref message) if message == "offline"));
+    assert_eq!(calls.load(Ordering::SeqCst), 2);
+    login_gate.add_permits(1);
+    login.await.unwrap();
+}
+
+#[tokio::test]
+async fn independent_stores_do_not_share_healing() {
+    let (first, _, first_calls, first_gate) = coordinated_parsers(Mode::Select).await;
+    let (second, _, second_calls, second_gate) = coordinated_parsers(Mode::Select).await;
+    let mut a = Box::pin(first.parse(healing_request()));
+    let mut b = Box::pin(second.parse(healing_request()));
+    poll_pending(a.as_mut()).await;
+    poll_pending(b.as_mut()).await;
+    assert_eq!(first_calls.load(Ordering::SeqCst), 1);
+    assert_eq!(second_calls.load(Ordering::SeqCst), 1);
+    first_gate.add_permits(1);
+    second_gate.add_permits(1);
+    let (a, b) = tokio::join!(a, b);
+    assert!(a.unwrap().healing.unresolved.is_empty());
+    assert!(b.unwrap().healing.unresolved.is_empty());
 }

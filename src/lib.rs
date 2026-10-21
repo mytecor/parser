@@ -2,6 +2,7 @@
 //! Inputs are borrowed for the parse future; outputs and immutable rule snapshots are owned.
 mod core;
 mod error;
+mod flights;
 mod healing;
 mod jev;
 mod parser;

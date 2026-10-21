@@ -130,10 +130,11 @@ model. Retries and redirects are disabled. You can supply your own `JevClient`
 implementation; local tests use a mock without network access or secrets.
 Real requests are covered by separate live tests that must be run explicitly.
 
-Transport errors, timeouts, `none`, unknown answer options, and failed validation
-leave the original rules in place. Results retain local matches and report
-`healing_failed`/`unresolved`. YAML errors, unsupported languages, invalid input,
-and exceeded limits are returned through the typed `Error` enum.
+Transport errors and Jev timeouts return `Error::Healing` for the initiating parse
+and all parses waiting for the same healing attempt, without retries. `none`,
+unknown answer options, and failed validation leave the original rules in place;
+results retain local matches and report `healing_failed`/`unresolved`. YAML errors,
+unsupported languages, invalid input, and exceeded limits return typed errors.
 `healing.attempted` indicates an actual client call. A parse operation is never
 split into multiple API requests.
 
@@ -151,7 +152,22 @@ Healing replaces only `rule`, retaining `id`, `language`, `message`, and other f
 the network call. On a revision conflict, parsing returns the original matches
 and revision, reports the conflict, and does not retry Jev. Accepted changes are
 immediately available to subsequent calls on the same `Parser`. Clones of
-`Parser` share the store. File replacement is atomic within the filesystem,
+`Parser` share the store.
+
+Concurrent healing is coordinated per rule ID and revision within one process,
+including separately built parsers using the same `Arc<dyn RuleStore>` allocation.
+An overlapping batch waits before starting any healing of its own. After waiting,
+each parse reloads the snapshot and matches its own document again, reusing its AST.
+Rules covered by the shared attempt are not sent to Jev again by that parse, even
+if no repair was selected or the repair does not match its document. Other broken
+rules can still be healed in one batch. Waiting does not set `healing.attempted`;
+`healing.updated` lists only updates committed by that parse. Cancellation of the
+initiating parse also fails its waiters and releases the reservation. Waiting is
+bounded by the waiting parser's `jev_timeout`. Different rules can still conflict
+on the store's global revision. Independent stores and processes do not share
+healing attempts.
+
+File replacement is atomic within the filesystem,
 but does not provide CAS between independent processes.
 
 ## Limits and boundaries
