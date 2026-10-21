@@ -1,0 +1,23 @@
+id: login-submit
+language: Html
+message: Sign in button on the login form
+rule:
+  kind: element
+  has:
+    kind: start_tag
+    regex: '<button'
+---
+id: product-price
+language: Json
+message: Current product price
+rule:
+  kind: pair
+  has:
+    kind: string
+    regex: '^"price"$'
+---
+id: document-heading
+language: Markdown
+message: Markdown ATX headings
+rule:
+  kind: atx_heading
