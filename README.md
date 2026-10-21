@@ -123,10 +123,30 @@ let parser = Parser::builder()
 # }
 ```
 
-The client uses the official
+The client defaults to the official
 [System One API](https://docs.typesafe.ai/api/system-one),
 `POST https://api.typesafe.ai/v1/systemone`, a Bearer token, and the `jev-latest`
-model. Retries and redirects are disabled. You can supply your own `JevClient`
+model. Retries and redirects are disabled.
+
+To use an alternative provider, proxy, or local mock without being tied to TypeSafe,
+configure a custom base URL or endpoint via builder methods or the `JEV_BASE_URL` environment variable:
+
+```rust,no_run
+# use universal_self_healing_parser::HttpJevClient;
+# fn example(key: String) -> Result<(), Box<dyn std::error::Error>> {
+// Accepts a root URL ("https://my-provider.com"), versioned URL ("https://my-provider.com/v1"),
+// or full endpoint URL ("https://my-provider.com/v1/systemone"):
+let client = HttpJevClient::new(key)?
+    .base_url("https://my-provider.com");
+
+// Or specify an exact endpoint without normalization:
+let client = HttpJevClient::new(key)?
+    .endpoint("https://my-provider.com/custom/decide");
+# Ok(())
+# }
+```
+
+You can supply your own `JevClient`
 implementation; local tests use a mock without network access or secrets.
 Real requests are covered by separate live tests that must be run explicitly.
 
@@ -192,9 +212,9 @@ The contract for a future browser adapter is described in `docs/playwright-adapt
 
 ## Tests against the real Jev API
 
-Set `JEV_API_KEY=...` in the project root `.env` file or export `JEV_API_KEY`
-in the environment. The environment variable takes precedence. Live tests read
-`.env` through `dotenvy`, do not modify the process environment, and do not
+Set `JEV_API_KEY=...` (and optionally `JEV_BASE_URL=...` for custom providers) in the
+project root `.env` file or export them in the environment. Environment variables take precedence.
+Live tests read `.env` through `dotenvy`, do not modify the process environment, and do not
 print the key. The `.env` file is excluded from Git. Loading `.env` is specific
 to tests: the library still accepts the key explicitly through `HttpJevClient::new`.
 

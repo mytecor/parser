@@ -13,24 +13,31 @@ use universal_self_healing_parser::*;
 
 fn live_client() -> HttpJevClient {
     // Read without changing process-wide environment variables in concurrent tests.
-    let key = std::env::var("JEV_API_KEY")
-        .ok()
-        .or_else(|| {
-            let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(".env");
-            let entries = dotenvy::from_path_iter(path).unwrap_or_else(|_| {
-                panic!("Cannot read project .env; set JEV_API_KEY in the environment instead")
-            });
-            for entry in entries {
-                let (name, value) = entry.unwrap_or_else(|_| panic!("Cannot parse project .env"));
-                if name == "JEV_API_KEY" {
-                    return Some(value);
+    let mut env_key = std::env::var("JEV_API_KEY").ok();
+    let mut env_base_url = std::env::var("JEV_BASE_URL").ok();
+
+    if env_key.as_ref().map_or(true, |k| k.trim().is_empty()) || env_base_url.is_none() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join(".env");
+        if let Ok(entries) = dotenvy::from_path_iter(path) {
+            for entry in entries.flatten() {
+                if entry.0 == "JEV_API_KEY" && env_key.as_ref().map_or(true, |k| k.trim().is_empty()) {
+                    env_key = Some(entry.1);
+                } else if entry.0 == "JEV_BASE_URL" && env_base_url.is_none() {
+                    env_base_url = Some(entry.1);
                 }
             }
-            None
-        })
-        .filter(|key| !key.trim().is_empty())
+        }
+    }
+
+    let key = env_key
+        .filter(|k| !k.trim().is_empty())
         .expect("Live tests require a nonempty JEV_API_KEY in the environment or project .env");
-    HttpJevClient::new(key).expect("Cannot construct Jev HTTP client")
+
+    let mut client = HttpJevClient::new(key).expect("Cannot construct Jev HTTP client");
+    if let Some(base_url) = env_base_url.filter(|u| !u.trim().is_empty()) {
+        client = client.base_url(base_url);
+    }
+    client
 }
 
 #[tokio::test]
